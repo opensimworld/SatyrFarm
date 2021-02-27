@@ -1,8 +1,14 @@
-string FOODITEM = "Slop";
-string FOODTOWER = "SF Fridge";
+string TITLE="Feeder";
+list FOODITEMS = [];
+string AUTOFOODITEM ; // Which food to take from rack
+string FOODTOWER = "SF Storage Rack";
+float waterMinZ; // prim Z position
+float waterMaxZ;
+float foodMinZ;
+float foodMaxZ;
 
-integer FARM_CHANNEL = -911201;
 string PASSWORD="*";
+
 
 integer chan(key u)
 {
@@ -31,8 +37,9 @@ checkListen()
     }
 }
 
-float food=50.;
-float water=50.;
+
+float food=10.;
+float water=10.;
 string status;
 integer autoWater = 0;
 integer autoFood = 0;
@@ -79,18 +86,58 @@ psys(key k)
                 
 }
 
+
+
+
+loadConfig()
+{
+   
+    list lines = llParseString2List(osGetNotecard("config"), ["\n"], []);
+    integer i;
+    for (i=0; i < llGetListLength(lines); i++)
+    {
+        string line = llStringTrim(llList2String(lines, i), STRING_TRIM);
+        if (llGetSubString(line, 0, 0) != "#")
+        { 
+            list tok = llParseStringKeepNulls(llList2String(lines,i), ["="], []);
+            string cmd=llStringTrim(llList2String(tok, 0), STRING_TRIM);
+            string val=llStringTrim(llList2String(tok, 1), STRING_TRIM);
+            llWhisper(0,cmd+"="+val);
+            if (cmd == "TITLE") TITLE = val;
+            else if (cmd == "FOOD") FOODITEMS += val;
+            else if (cmd == "FOODTOWER") FOODTOWER = val;
+            else if (cmd == "AUTOFOODITEM") AUTOFOODITEM = val;
+            else if (cmd == "WATER_ZMIN") waterMinZ = (float)val;
+            else if (cmd == "WATER_ZMAX") waterMaxZ = (float)val;
+            else if (cmd == "FOOD_ZMAX") foodMaxZ = (float)val;
+            else if (cmd == "FOOD_ZMIN") foodMinZ = (float)val;
+        }
+    }
+}
+
+
+integer getLinkNum(string name)
+{
+    integer i;
+    for (i=1; i <=llGetNumberOfPrims(); i++)
+        if (llGetLinkName(i) == name) return i;
+    return -1;
+}
+
 refresh()
 {
 
-    llSetText(FOODITEM+": "+(integer)food+"%\nWater: "+(integer)water+"%\n" , <1,1,1>, 1.0);
-    if (water <=4 && autoWater)
+    llSetText(TITLE+"\nFood: "+(string)((integer)food)+"%\nWater: "+(string)((integer)water)+"%\n" , <1,1,1>, 1.0);
+    llSetObjectDesc("F;"+AUTOFOODITEM+";"+(string)llRound(water)+";"+(string)llRound(food));
+    if (water <=5 && autoWater)
     {
         status = "WaitAutoWater";
         lookFor = "SF Water Tower";
         llSensor(lookFor, "" , SCRIPTED, 96, PI);
         llWhisper(0, "Looking for water tower...");
     }
-    else if (food <=4 && autoFood)
+    
+    else if (AUTOFOODITEM != "" && food <=4 && autoFood)
     {
         lookFor =  FOODTOWER; //"SF Storage Rack";
         status = "WaitAutoFood";
@@ -98,14 +145,23 @@ refresh()
         llWhisper(0, "Looking for "+FOODTOWER+"...");
     }
     
+    
     vector v ;
-    v = llList2Vector(llGetLinkPrimitiveParams(3, [PRIM_SIZE]), 0);
-    v.z = 0.45* water/100.;
-    llSetLinkPrimitiveParamsFast(3, [PRIM_SIZE, v]);
+    integer ln = getLinkNum("Water");
+    if (ln >0)
+    {
+        v = llList2Vector(llGetLinkPrimitiveParams(ln, [PRIM_POS_LOCAL]), 0);
+        v.z = waterMinZ + (waterMaxZ-waterMinZ)* water/100.;
+        llSetLinkPrimitiveParamsFast(ln, [PRIM_POS_LOCAL, v]);
+    }
 
-    v = llList2Vector(llGetLinkPrimitiveParams(5, [PRIM_SIZE]), 0);
-    v.z = 0.45* food/100.;
-    llSetLinkPrimitiveParamsFast(5, [PRIM_SIZE, v]);
+    ln = getLinkNum("Food");
+    if (ln >0)
+    {
+        v = llList2Vector(llGetLinkPrimitiveParams(ln, [PRIM_POS_LOCAL]), 0);
+        v.z = foodMinZ + (foodMaxZ-foodMinZ)* food/100.;
+        llSetLinkPrimitiveParamsFast(ln, [PRIM_POS_LOCAL, v]);
+    }
 
 }
 
@@ -115,13 +171,7 @@ default
 { 
     listen(integer c, string nm, key id, string m)
     {
-        if (m == "Add "+FOODITEM)
-        {
-            status = "WaitSack";
-            lookFor ="SF "+FOODITEM; 
-            llSensor( lookFor, "",SCRIPTED,  5, PI);
-        }
-        else if (m == "Add Water")
+        if (m == "Add Water")
         {
             status = "WaitWater";
             lookFor = "SF Water";
@@ -139,9 +189,13 @@ default
             llSay(0, "AutoFood="+(string)autoFood);
             llSetTimerEvent(1);
         }
-        else
+        else if (llGetSubString(m, 0, 3) == "Add ")
         {
-
+            
+            string what = llGetSubString(m,4,-1);
+            status = "WaitSack";
+            lookFor ="SF "+what; 
+            llSensor( lookFor, "",SCRIPTED,  5, PI);
         }
     }
     
@@ -150,7 +204,7 @@ default
     {
             list tk = llParseStringKeepNulls(m, ["|"] , []);
             string cmd = llList2Key(tk,0);
-            if (llList2String(tk,1) != PASSWORD)  { llOwnerSay("'"+llList2String(tk,1)+"'!='"+PASSWORD+"'"); return;  } 
+            if (llList2String(tk,1) != PASSWORD)  { llSay(0, "Bad password'"); return;  } 
             
             if (cmd  == "FEEDME")
             {
@@ -161,7 +215,12 @@ default
                     food -= f;
                     if (food<0) food=0;
                     osMessageObject(u,  "FOOD|"+PASSWORD);
-                    psys(u);
+                    key o = llList2Key(tk, 4);
+                    if (o != NULL_KEY)
+                        psys(o);
+                    else
+                        psys(u);
+
                 }
             }
             else if (cmd == "WATERME")
@@ -173,7 +232,11 @@ default
                     water -= f;
                     if (water<0) water=0;
                     osMessageObject(u,  "WATER|"+PASSWORD);
-                    psys(u);
+                    key o = llList2Key(tk, 4);
+                    if (o != NULL_KEY)
+                        psys(o);
+                    else
+                        psys(u);
                 }
             }
             else if (cmd == "HAVEWATER")
@@ -185,7 +248,8 @@ default
                 psys(NULL_KEY);
                 status = "";
             }
-            else if (cmd == "HAVE"  && llList2Key(tk,2)==FOODITEM)
+
+            else if (cmd == "HAVE"  && llList2Key(tk,2) == AUTOFOODITEM)
             {
                 llWhisper(0,"Auto-food completed");
                 food += 40;
@@ -201,12 +265,17 @@ default
                 llSleep(2.);
                 psys(NULL_KEY);
             }
-            else if (cmd == llToUpper(FOODITEM))
+            else 
             {
-                food += 40;
-                if (food>100) food =100;
-                llSleep(2.);
-                psys(NULL_KEY);
+                integer i;
+                for (i=0; i < llGetListLength(FOODITEMS); i++)
+                    if (llToUpper(llList2String(FOODITEMS, i)) == cmd)
+                    {
+                        food += 40;
+                        if (food>100) food =100;
+                        llSleep(2.);
+                        psys(NULL_KEY);
+                    }
             }
             refresh();
     }
@@ -221,16 +290,21 @@ default
 
     touch_start(integer n)
     {
-        //llOwnerSay((string)llGetLinkPrimitiveParams(llDetectedLinkNumber(0),[ PRIM_POS_LOCAL])); return;
+
         list opts = [];
         if (water < 80) opts += "Add Water";
-        if (food  < 80) opts += "Add "+FOODITEM;
+        if (food  < 80) 
+        {
+            integer i;
+            for (i=0; i < llGetListLength(FOODITEMS); i++)
+                opts += "Add "+llList2String(FOODITEMS, i);;
+        }
         if (autoWater) opts += "AutoWater Off";
         else opts += "AutoWater On";
     
-        if (autoFood) opts += "AutoFood Off";
+       if (autoFood) opts += "AutoFood Off";
         else opts += "AutoFood On";
-    
+
         opts += "CLOSE";
         startListen();
         llDialog(llDetectedKey(0), "Select", opts, chan(llGetKey()));
@@ -244,24 +318,23 @@ default
         {
           
             osMessageObject(id,  "GIVEWATER|"+PASSWORD+"|"+(string)llGetKey());
-            //status = "WaitTower";
+
         }
         else  if (status== "WaitAutoFood")
         {
-            osMessageObject(id,  "GIVE|"+PASSWORD+"|"+ FOODITEM+"|"+(string)llGetKey());
-            //status  = "WaitTower";
+            osMessageObject(id,  "GIVE|"+PASSWORD+"|"+ AUTOFOODITEM +"|"+(string)llGetKey());
         }
         else if ( status == "WaitWater")
         {
             llSay(0, "Found water bucket, emptying...");
-            osMessageObject(id, "DIE|"+llGetKey());
+            osMessageObject(id, "DIE|"+(string)llGetKey());
             //osMessageObject(llDetectedKey(0), "DIE|"+llGetKey());
            
         }
         else if ( status == "WaitSack")
         {
-            llSay(0, "Found "+FOODITEM+", emptying...");
-            osMessageObject(id,  "DIE|"+llGetKey());
+            llSay(0, "Found "+lookFor+", emptying...");
+            osMessageObject(id,  "DIE|"+(string)llGetKey());
             //osMessageObject(llDetectedKey(0), "DIE|"+ llGetKey());
         }
 
@@ -269,15 +342,16 @@ default
     
     no_sensor()
     {
-        if (status == "WaitWater" || status == "WaitFood")
-            llSay(0, "Error! "+lookFor+" not found nearby! You must it near me!");
-        else 
+        if (status == "WaitAutoWater" || status == "WaitAutoFood")
             llSay(0, "Error! "+lookFor+" not found with in 96m! Auto mode not working!");
+        else 
+            llSay(0, "Error! "+lookFor+" not found nearby! You must bring it near me!");
     }
  
     state_entry()
     {
-        PASSWORD = llStringTrim(osGetNotecard("sfp"), STRING_TRIM);
+        PASSWORD = llStringTrim(osGetNotecardLine("sfp", 0), STRING_TRIM);
+        loadConfig();
         refresh();
         
     }   
@@ -287,4 +361,3 @@ default
         llResetScript();
     }
 }
-
